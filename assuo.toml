@@ -1,0 +1,8 @@
+[source]
+text = "Hello!"
+
+[[patch]]
+do = "insert"
+way = "post"
+spot = 4
+source = { text = ", World" }

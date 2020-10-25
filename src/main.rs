@@ -31,8 +31,9 @@ fn init(file_name: String) {
 text = "Hello!"
 
 [[patch]]
-modify = "post insert"
-spot = 5
+do = "insert"
+way = "post"
+spot = 4
 source = { text = ", World" }
 "#
         .as_bytes(),
@@ -41,32 +42,86 @@ source = { text = ", World" }
 }
 
 fn do_patch(mut file: AssuoFile) {
-    // first, grab the source of the file
-    eprintln!("resolving base source");
-    let mut source = file.source.resolve();
+    // in the future, it would be nice to be able to apply patches as they come along so that everything is
+    // non-blocking and fast, but for now, it's much simpler to "resolve everything -> apply patches"
 
-    // TODO: resolve patches asynchronously here or something
-    let mut patches = file.patch;
+    // resolve the base
+    let mut file = file.resolve();
 
-    // to apply patches, it would be weird and hacky to have to deal with
-    // maintaining "okay add this much" after a certain index or whatever
-    //
-    // so we just re-order the patches so that we apply the last one first
-    eprintln!("sorting patches by insertion order");
-    patches.sort_by(|a, b| b.spot.partial_cmp(&a.spot).unwrap());
+    // resolve every patch
+    let mut patches = file
+        .patch
+        .into_iter()
+        .map(|p| p.resolve())
+        .collect::<Vec<_>>();
 
-    // now, we can sequentially apply patches not worrying about the index
+    // so right now i'm just going for simplicity rather than speed, so i just need a method that works for these patches
+    // one ideal thing to do is to maintain another Vec with a Vec of indexes that is in the original file
+    // really bad in terms of performance, *but* it is simple for finding the index something should be at
+
+    let mut indexes = Vec::with_capacity(file.source.len());
+    for i in 0..file.source.len() {
+        indexes.push(vec![i]);
+    }
+
+    fn get_index(indexes: &Vec<Vec<usize>>, i: usize) -> usize {
+        for (idx, index) in indexes.iter().enumerate() {
+            if index.contains(&i) {
+                return idx;
+            }
+        }
+
+        panic!("assuo patch out of bounds?");
+    }
+
+    // now, we apply each patch sequentially, maintaining the indexes vec as we go
     for patch in patches {
-        eprintln!("resolving patch");
-        let bytes = patch.source.resolve();
+        match patch {
+            AssuoPatch::Insert { way, spot, source } => {
+                let insertion_point = get_index(&indexes, spot);
 
-        eprintln!("stitching to original source");
-        for _ in source.splice(patch.spot..patch.spot, bytes) {}
+                let insertion_point = match way {
+                    Direction::Pre => insertion_point,
+                    Direction::Post => insertion_point + 1,
+                };
+
+                indexes.splice(
+                    insertion_point..insertion_point,
+                    (0..source.len()).map(|_| vec![std::usize::MAX]),
+                );
+
+                file.source.splice(insertion_point..insertion_point, source);
+            }
+            AssuoPatch::Remove { way, spot, count } => {
+                let insertion_point = get_index(&indexes, spot);
+
+                let insertion_point = match way {
+                    Direction::Post => insertion_point + 1,
+                    Direction::Pre => insertion_point - count,
+                };
+
+                let fold = indexes[insertion_point..(insertion_point + count)]
+                    .iter()
+                    .fold(Vec::new(), |mut acc, elem| {
+                        for element in elem {
+                            if !acc.contains(element) {
+                                acc.push(*element);
+                            }
+                        }
+                        acc
+                    });
+
+                indexes.splice(insertion_point..(insertion_point + count), vec![fold]);
+
+                file.source
+                    .splice(insertion_point..(insertion_point + count), vec![]);
+            }
+        }
     }
 
     std::io::stdout()
         .lock()
-        .write(&source)
+        .write(&file.source)
         .expect("to write to stdout");
 }
 
@@ -118,7 +173,8 @@ fn main(args: paw::Args) {
     // assuo /u https://x
     // wget -O - https://x | assuo
 
-    let being_piped = !atty::is(atty::Stream::Stdin);
+    // TODO: clean up mess
+    // let being_piped = !atty::is(atty::Stream::Stdin);
     let mut do_init = false;
 
     for arg in args.skip(1) {
@@ -127,7 +183,7 @@ fn main(args: paw::Args) {
             return;
         }
 
-        let mut trim_for_arg = if arg.starts_with("--") {
+        let trim_for_arg = if arg.starts_with("--") {
             2
         } else if arg.starts_with("-") {
             1

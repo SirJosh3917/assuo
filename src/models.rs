@@ -1,17 +1,19 @@
+//! This module holds the data structures used when deserializing an Assuo patch file.
+
 use serde::de::Error;
 use serde::Deserialize;
 use toml::Value;
 
-/// Represents an Assuo Patch File. Every Assuo Patch File has a primary source that it is based off of,
+/// Represents an Assuo patch file. Every Assuo patch file has a primary source that it is based off of,
 /// and a series of patches that it needs to apply to the source.
 #[derive(Debug, Deserialize)]
-pub struct AssuoFile {
+pub struct AssuoFile<S = AssuoSource> {
     /// The primary source of this Assuo File. All Assuo modifications are based off of this copy.
     /// All `spot` values correlate directly to the offset (in bytes) of the original file, and patches
     /// will be applied in the order they are listed in, in the method described.
     ///
     /// This enforces the idea that if you want to modify your modifications, you have to create a new base.
-    pub source: AssuoSource,
+    pub source: S,
 
     /// A list of patches to apply. Each patch is applied sequentially, and all `spot` values correlate directly to
     /// the offset (in bytes) of the original file.
@@ -39,28 +41,59 @@ pub enum AssuoSource {
 }
 
 /// Represents a single action of patching.
-#[derive(Debug, Deserialize)]
-pub struct AssuoPatch {
-    /// The type of patching to apply.
-    ///
-    /// - `pre insert`: Inserts the value of the source right before the `spot`.
-    /// - `post insert`: Inserts the value of the source right after the `spot`.
-    pub modify: AssuoModSpot,
-    /// The position (in raw bytes) of the base source to insert the data at.
-    pub spot: usize,
-    /// The value to insert.
-    pub source: AssuoSource,
+#[derive(Debug)]
+pub enum AssuoPatch<S = AssuoSource> {
+    /// Inserts data at a spot. This entails which direction to insert it in, the spot in the original file to start
+    /// inserting data at, and the source to resolve for the bytes to insert.
+    Insert {
+        way: Direction,
+        spot: usize,
+        source: S,
+    },
+    /// Removes data at a spot. This entails which direction to remove data in, the spot in the original file to start
+    /// removing data at, and the amount of data to remove.
+    Remove {
+        way: Direction,
+        spot: usize,
+        count: usize,
+    },
 }
 
-/// Describes the method which to modify the file.
+/// The direction a modification looks in.
 #[derive(Debug)]
-pub enum AssuoModSpot {
-    /// Inserts the data right before the spot.
-    // PreInsert,
-    /// Inserts the data right after the spot.
-    PostInsert,
-    // PreRemove,
-    // PostRemove,
+pub enum Direction {
+    /// Before a given spot. For insertions, this would insert data right before the spot. For removals, this would remove
+    /// a certain amount of bytes before the spot.
+    Pre,
+    /// After a given spot. For insertions, this would insert data right after the spot. For removals, this would remove
+    /// a certain amount of bytes after the spot.
+    Post,
+}
+
+// some mildly ugly stuff
+
+impl AssuoFile {
+    pub fn resolve(self) -> AssuoFile<Vec<u8>> {
+        let source = self.source.resolve();
+        AssuoFile {
+            source,
+            patch: self.patch,
+        }
+    }
+}
+
+impl AssuoPatch {
+    pub fn resolve(self) -> AssuoPatch<Vec<u8>> {
+        match self {
+            AssuoPatch::Insert { way, spot, source } => {
+                let source = source.resolve();
+                AssuoPatch::<Vec<u8>>::Insert { way, spot, source }
+            }
+            AssuoPatch::Remove { way, spot, count } => {
+                AssuoPatch::<Vec<u8>>::Remove { way, spot, count }
+            }
+        }
+    }
 }
 
 impl AssuoSource {
@@ -74,21 +107,100 @@ impl AssuoSource {
 }
 
 // == ugly serialization stuff below ==
+// todo: cleanup
 
-impl<'de> Deserialize<'de> for AssuoModSpot {
+trait TomlDeserialize<'de>: Sized {
+    fn deserialize_toml<D>(value: Value) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>;
+}
+
+impl<'de, S: TomlDeserialize<'de>> Deserialize<'de> for AssuoPatch<S> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        match Value::deserialize(deserializer)? {
-            Value::String(string) => match string.as_str() {
-                // "pre insert" | "pre ins" => Ok(AssuoModSpot::PreInsert),
-                "post insert" | "post ins" => Ok(AssuoModSpot::PostInsert),
-                // "pre remove" | "pre rm" => Ok(AssuoModSpot::PreRemove),
-                // "post remove" | "post rm" => Ok(AssuoModSpot::PostRemove),
-                _ => Err(Error::custom("didnt get right modify type")),
-            },
-            _ => Err(Error::custom("didnt get a string as payload")),
+        let table = match Value::deserialize(deserializer)? {
+            Value::Table(table) => table,
+            _ => return Err(Error::custom("didnt get a table as payload")),
+        };
+
+        let action = table.get("do");
+        let is_insert = if let Some(action) = action {
+            let action = match action {
+                Value::String(string) => string,
+                _ => {
+                    return Err(Error::custom(
+                        "expected string for action 'do', didnt get that",
+                    ))
+                }
+            };
+
+            // uppercase because docs have it like this,
+            // TODO PERF: explore micro-optimization with branch prediction if it should be uppercase or lowercase
+            if action.eq_ignore_ascii_case("INSERT") {
+                true
+            } else if action.eq_ignore_ascii_case("REMOVE") {
+                false
+            } else {
+                return Err(Error::custom(
+                    "expected eitehr 'insert' or 'remove' for 'do'",
+                ));
+            }
+        } else {
+            return Err(Error::custom("didnt get key 'do' with insert or remove"));
+        };
+
+        // both insert and remove need 'way' and 'spot'
+        let way = match table.get("way") {
+            Some(way) => way,
+            None => return Err(Error::custom("didn't get 'way'")),
+        };
+
+        let way = match way {
+            toml::Value::String(string) => string,
+            _ => return Err(Error::custom("didn't get string for way")),
+        };
+
+        let way = match way.as_str() {
+            "pre" => Direction::Pre,
+            "post" => Direction::Post,
+            _ => return Err(Error::custom("didn't get 'pre' or 'post' for 'way'")),
+        };
+
+        let spot = match table.get("spot") {
+            Some(spot) => spot,
+            None => return Err(Error::custom("didn't get 'spot'")),
+        };
+
+        let spot = match spot {
+            toml::Value::Integer(value) => value.clone() as usize,
+            _ => return Err(Error::custom("spot wasn't an integer")),
+        };
+
+        if is_insert {
+            // TODO: don't clone, and just consume the table
+            let source = match table.get("source") {
+                Some(value) => value,
+                None => return Err(Error::custom("expected source to be specified, it wasnt")),
+            }
+            .clone();
+
+            let source = S::deserialize_toml::<D>(source)?;
+
+            Ok(AssuoPatch::<S>::Insert { way, spot, source })
+        } else {
+            let count = match table.get("count") {
+                Some(value) => value,
+                None => return Err(Error::custom("expected count to be specified, it wasnt")),
+            };
+
+            let count = match count {
+                Value::Integer(count) => count.clone(),
+                _ => return Err(Error::custom("expected count to be integer, it wasnt")),
+            } as usize;
+
+            Ok(AssuoPatch::<S>::Remove { way, spot, count })
         }
     }
 }
@@ -99,7 +211,15 @@ impl<'de> Deserialize<'de> for AssuoSource {
         D: serde::Deserializer<'de>,
     {
         let value = toml::Value::deserialize(deserializer)?;
+        AssuoSource::deserialize_toml::<D>(value)
+    }
+}
 
+impl<'de> TomlDeserialize<'de> for AssuoSource {
+    fn deserialize_toml<D>(value: Value) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
         // TODO: this is hideous but it works and it's good enough, so... :yum:
         match value {
             toml::Value::Table(table) => {
