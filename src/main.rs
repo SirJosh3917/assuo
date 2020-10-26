@@ -1,4 +1,3 @@
-use atty::Stream;
 use std::io::prelude::*;
 
 pub mod models;
@@ -26,6 +25,8 @@ fn init(file_name: String) {
         .open(file_name)
         .expect("couldn't open file for writing");
 
+    // TODO: when https://github.com/alexcrichton/toml-rs/issues/265 gets resolved, this should
+    // get looked at so there's compile time validation of the data we're writing to disk
     file.write_all(
         r#"[source]
 text = "Hello!"
@@ -41,7 +42,7 @@ source = { text = ", World" }
     .expect("couldn't write to file");
 }
 
-fn do_patch(mut file: AssuoFile) {
+fn do_patch(file: AssuoFile) -> Vec<u8> {
     // in the future, it would be nice to be able to apply patches as they come along so that everything is
     // non-blocking and fast, but for now, it's much simpler to "resolve everything -> apply patches"
 
@@ -49,7 +50,7 @@ fn do_patch(mut file: AssuoFile) {
     let mut file = file.resolve();
 
     // resolve every patch
-    let mut patches = file
+    let patches = file
         .patch
         .into_iter()
         .map(|p| p.resolve())
@@ -119,10 +120,7 @@ fn do_patch(mut file: AssuoFile) {
         }
     }
 
-    std::io::stdout()
-        .lock()
-        .write(&file.source)
-        .expect("to write to stdout");
+    file.source
 }
 
 #[paw::main]
@@ -174,7 +172,7 @@ fn main(args: paw::Args) {
     // wget -O - https://x | assuo
 
     // TODO: clean up mess
-    // let being_piped = !atty::is(atty::Stream::Stdin);
+    let being_piped = !atty::is(atty::Stream::Stdin);
     let mut do_init = false;
 
     for arg in args.skip(1) {
@@ -215,8 +213,30 @@ fn main(args: paw::Args) {
         return;
     }
 
+    // if something's being piped into assuo, we can assume it's a toml patch file
+    if being_piped {
+        let mut patch = String::new();
+        std::io::stdin()
+            .lock()
+            .read_to_string(&mut patch)
+            .expect("to read all bytes from stdin");
+        let patch = do_patch(
+            toml::from_str::<AssuoFile>(patch.as_str())
+                .expect("to deserialize stdin to an AssuoFile"),
+        );
+        std::io::stdout()
+            .lock()
+            .write_all(&patch)
+            .expect("to print to stdout");
+        return;
+    }
+
     // TODO: display help if no "assuo.toml" found (and print that no assuo.toml was found, showing help)
     let config =
         toml::from_str::<AssuoFile>(&std::fs::read_to_string("assuo.toml").unwrap()).unwrap();
-    do_patch(config);
+    let patch = do_patch(config);
+    std::io::stdout()
+        .lock()
+        .write_all(&patch)
+        .expect("to print to stdout");
 }

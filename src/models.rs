@@ -109,7 +109,7 @@ impl AssuoSource {
 // == ugly serialization stuff below ==
 // todo: cleanup
 
-trait TomlDeserialize<'de>: Sized {
+pub trait TomlDeserialize<'de>: Sized {
     fn deserialize_toml<D>(value: Value) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>;
@@ -122,7 +122,7 @@ impl<'de, S: TomlDeserialize<'de>> Deserialize<'de> for AssuoPatch<S> {
     {
         let table = match Value::deserialize(deserializer)? {
             Value::Table(table) => table,
-            _ => return Err(Error::custom("didnt get a table as payload")),
+            _ => return Err(Error::custom("didn't get a table as payload")),
         };
 
         let action = table.get("do");
@@ -131,7 +131,7 @@ impl<'de, S: TomlDeserialize<'de>> Deserialize<'de> for AssuoPatch<S> {
                 Value::String(string) => string,
                 _ => {
                     return Err(Error::custom(
-                        "expected string for action 'do', didnt get that",
+                        "expected string for action 'do', didn't get that",
                     ))
                 }
             };
@@ -144,11 +144,11 @@ impl<'de, S: TomlDeserialize<'de>> Deserialize<'de> for AssuoPatch<S> {
                 false
             } else {
                 return Err(Error::custom(
-                    "expected eitehr 'insert' or 'remove' for 'do'",
+                    "expected either 'insert' or 'remove' for 'do'",
                 ));
             }
         } else {
-            return Err(Error::custom("didnt get key 'do' with insert or remove"));
+            return Err(Error::custom("didn't get key 'do' with insert or remove"));
         };
 
         // both insert and remove need 'way' and 'spot'
@@ -182,7 +182,7 @@ impl<'de, S: TomlDeserialize<'de>> Deserialize<'de> for AssuoPatch<S> {
             // TODO: don't clone, and just consume the table
             let source = match table.get("source") {
                 Some(value) => value,
-                None => return Err(Error::custom("expected source to be specified, it wasnt")),
+                None => return Err(Error::custom("expected source to be specified, it wasn't")),
             }
             .clone();
 
@@ -192,12 +192,12 @@ impl<'de, S: TomlDeserialize<'de>> Deserialize<'de> for AssuoPatch<S> {
         } else {
             let count = match table.get("count") {
                 Some(value) => value,
-                None => return Err(Error::custom("expected count to be specified, it wasnt")),
+                None => return Err(Error::custom("expected count to be specified, it wasn't")),
             };
 
             let count = match count {
                 Value::Integer(count) => count.clone(),
-                _ => return Err(Error::custom("expected count to be integer, it wasnt")),
+                _ => return Err(Error::custom("expected count to be integer, it wasn't")),
             } as usize;
 
             Ok(AssuoPatch::<S>::Remove { way, spot, count })
@@ -230,7 +230,7 @@ impl<'de> TomlDeserialize<'de> for AssuoSource {
                     match inner {
                         toml::Value::Array(array) => {
                             if name != "bytes" {
-                                Err(serde::de::Error::custom("got array but didnt get bytes"))
+                                Err(serde::de::Error::custom("got array but didn't get bytes"))
                             } else {
                                 let mut bytes = Vec::with_capacity(array.len());
                                 for element in array {
@@ -243,7 +243,7 @@ impl<'de> TomlDeserialize<'de> for AssuoSource {
                                             }
                                         }
                                         _ => return Err(serde::de::Error::custom(
-                                            "when reading bytes array, didnt get nmumber in array",
+                                            "when reading bytes array, didn't get number in array",
                                         )),
                                     };
                                     bytes.push(byte);
@@ -258,7 +258,7 @@ impl<'de> TomlDeserialize<'de> for AssuoSource {
                             "assuo-url" => Ok(AssuoSource::AssuoUrl(string)),
                             "assuo-file" => Ok(AssuoSource::AssuoFile(string)),
                             _ => Err(serde::de::Error::custom(
-                                "didnt get key text/url/file/assuo-url/assuo-file",
+                                "didn't get key text/url/file/assuo-url/assuo-file",
                             )),
                         },
                         _ => Err(serde::de::Error::custom("invalid value")),
