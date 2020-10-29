@@ -4,6 +4,19 @@ use serde::de::Error;
 use serde::Deserialize;
 use toml::Value;
 
+/// Tries to deserialize a string to an AssuoFile
+///
+/// # Example
+/// ```
+/// use assuo::models::try_parse;
+///
+/// let source = r#"
+/// [source]
+/// text = "Hello, World!"
+/// "#;
+///
+/// assert!(try_parse(source).is_ok())
+/// ```
 pub fn try_parse(payload: &str) -> Result<AssuoFile, toml::de::Error> {
     toml::from_str(payload)
 }
@@ -21,6 +34,8 @@ pub struct AssuoFile<S = AssuoSource> {
 
     /// A list of patches to apply. Each patch is applied sequentially, and all `spot` values correlate directly to
     /// the offset (in bytes) of the original file.
+    // NOTE: this wouldn't be `Option<Vec<T>>` as `Vec<T>` can already be empty, but having the `Option<>` makes
+    // serde not complain when no patches are specified. /shrug
     pub patch: Option<Vec<AssuoPatch>>,
 }
 

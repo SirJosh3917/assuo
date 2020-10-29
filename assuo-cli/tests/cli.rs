@@ -1,28 +1,20 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-// EXPECTATION FOR ARGUMENT PARSING:
-// assuo aims to "do one thing, and do it right". our arg parsing aims to capture the unix philosophy by giving a
-// similar experience to what tools like `cat` offer.
-//
-// therefore, all we support is printing to stdout and reading from stdin.
-//
-// OFFICIALLY SANCTIONED & SUPPORTED SCENARIOS:
+// ASSUO CLI:
 //
 //     print out the help
 // assuo --help
 // assuo -h
 // assuo /?
 //
-//     prints out a template assuo.toml
+//     prints out a template assuo.toml (so it can be piped into a file)
 // assuo --init
 // assuo -i
 //
 //     run patches for an assuo file named `assuo.toml`
 // cat assuo.toml | assuo
-//
-//     run patches for an assuo file named `x`
-// cat x | assuo
+// type assuo.toml | assuo
 //
 //     run patches for an assuo file located at the URL `https://x`
 // wget -O - https://x | assuo
@@ -30,10 +22,6 @@ use predicates::prelude::*;
 fn cmd() -> Result<Command, assert_cmd::cargo::CargoError> {
     Command::cargo_bin("assuo")
 }
-
-// == tests ==
-
-// help
 
 #[test]
 fn when_help_arg_specified_help_is_printed() -> Result<(), Box<dyn std::error::Error>> {
@@ -64,7 +52,7 @@ fn init_prints_valid_assuo_toml() -> Result<(), Box<dyn std::error::Error>> {
         .arg("--init")
         .assert()
         .success()
-        .stdout(predicates::function::function(|bytes: &[u8]| {
+        .stdout(predicates::function::function(|bytes| {
             std::str::from_utf8(bytes)
                 .and_then(|payload| {
                     if let Ok(_) = assuo::models::try_parse(payload) {

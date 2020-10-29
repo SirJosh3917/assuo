@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["SirJosh3917 <SirJosh3917@users.noreply.github.com>"]
 edition = "2018"
 
+# since the lib's name is assuo and the bin's name is assuo-cli,
+# we do this to rename assuo-cli.exe to assuo
 [[bin]]
 name = "assuo"
 path = "./src/main.rs"
