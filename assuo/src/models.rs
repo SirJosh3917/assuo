@@ -4,6 +4,10 @@ use serde::de::Error;
 use serde::Deserialize;
 use toml::Value;
 
+pub fn try_parse(payload: &str) -> Result<AssuoFile, toml::de::Error> {
+    toml::from_str(payload)
+}
+
 /// Represents an Assuo patch file. Every Assuo patch file has a primary source that it is based off of,
 /// and a series of patches that it needs to apply to the source.
 #[derive(Debug, Deserialize)]

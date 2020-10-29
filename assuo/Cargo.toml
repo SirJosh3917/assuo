@@ -1,0 +1,9 @@
+[package]
+name = "assuo"
+version = "0.1.0"
+authors = ["SirJosh3917 <SirJosh3917@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+toml = "0.5.7"
+serde = { version = "1.0.117", features = ["derive"] }

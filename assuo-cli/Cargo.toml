@@ -1,0 +1,17 @@
+[package]
+name = "assuo-cli"
+version = "0.1.0"
+authors = ["SirJosh3917 <SirJosh3917@users.noreply.github.com>"]
+edition = "2018"
+
+[[bin]]
+name = "assuo"
+path = "./src/main.rs"
+
+[dependencies]
+assuo = { path = "../assuo" }
+paw = "1.0.0"
+
+[dev-dependencies]
+assert_cmd = "1.0.1"
+predicates = "1.0.5"
