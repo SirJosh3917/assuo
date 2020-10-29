@@ -230,7 +230,9 @@ fn cmd() -> Result<CommandWithTempWorksapce, Box<dyn std::error::Error>> {
     let workspace = TempDir::new()?;
     let mut command = std::process::Command::cargo_bin("assuo")?;
 
+    // by default, every command gets a workspace because of dealing with `assuo.toml`
     command.current_dir(&workspace);
+
     Ok(CommandWithTempWorksapce { command, workspace })
 }
 

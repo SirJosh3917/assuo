@@ -17,7 +17,7 @@ pub struct AssuoFile<S = AssuoSource> {
 
     /// A list of patches to apply. Each patch is applied sequentially, and all `spot` values correlate directly to
     /// the offset (in bytes) of the original file.
-    pub patch: Vec<AssuoPatch>,
+    pub patch: Option<Vec<AssuoPatch>>,
 }
 
 /// Represents some kind of value Assuo knows how to deal with as a source. Each value can be deciphered into

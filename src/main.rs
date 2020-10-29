@@ -4,7 +4,7 @@ pub mod models;
 use models::*;
 
 fn help() {
-    println!(
+    eprintln!(
         "OVERVIEW: assuo patch maker
 
 USAGE: assuo [--url source_url]/[--file file_location]/[--init]/[--help]
@@ -18,28 +18,31 @@ OPTIONS:
     );
 }
 
-fn init(file_name: String) {
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(file_name)
-        .expect("couldn't open file for writing");
+fn init(file_name: Option<String>) {
+    let assuo_config = r#"[source]
+    text = "Hello!"
+    
+    [[patch]]
+    do = "insert"
+    way = "post"
+    spot = 4
+    source = { text = ", World" }
+    "#;
 
-    // TODO: when https://github.com/alexcrichton/toml-rs/issues/265 gets resolved, this should
-    // get looked at so there's compile time validation of the data we're writing to disk
-    file.write_all(
-        r#"[source]
-text = "Hello!"
+    if let Some(file_name) = file_name {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(file_name)
+            .expect("couldn't open file for writing");
 
-[[patch]]
-do = "insert"
-way = "post"
-spot = 4
-source = { text = ", World" }
-"#
-        .as_bytes(),
-    )
-    .expect("couldn't write to file");
+        // TODO: when https://github.com/alexcrichton/toml-rs/issues/265 gets resolved, this should
+        // get looked at so there's compile time validation of the data we're writing to disk
+        file.write_all(assuo_config.as_bytes())
+            .expect("couldn't write to file");
+    } else {
+        println!("{}", assuo_config);
+    }
 }
 
 fn do_patch(file: AssuoFile) -> Vec<u8> {
@@ -52,6 +55,7 @@ fn do_patch(file: AssuoFile) -> Vec<u8> {
     // resolve every patch
     let patches = file
         .patch
+        .unwrap_or_default()
         .into_iter()
         .map(|p| p.resolve())
         .collect::<Vec<_>>();
@@ -172,12 +176,14 @@ fn main(args: paw::Args) {
     // wget -O - https://x | assuo
 
     // TODO: clean up mess
-    let being_piped = !atty::is(atty::Stream::Stdin);
+
+    let mut got_arg = false;
     let mut do_init = false;
 
     for arg in args.skip(1) {
+        got_arg = true;
         if do_init {
-            init(arg);
+            init(Some(arg));
             return;
         }
 
@@ -209,31 +215,23 @@ fn main(args: paw::Args) {
     }
 
     if do_init {
-        init(String::from("assuo.toml"));
+        init(None);
         return;
     }
 
-    // if something's being piped into assuo, we can assume it's a toml patch file
-    if being_piped {
-        let mut patch = String::new();
-        std::io::stdin()
-            .lock()
-            .read_to_string(&mut patch)
-            .expect("to read all bytes from stdin");
-        let patch = do_patch(
-            toml::from_str::<AssuoFile>(patch.as_str())
-                .expect("to deserialize stdin to an AssuoFile"),
-        );
-        std::io::stdout()
-            .lock()
-            .write_all(&patch)
-            .expect("to print to stdout");
-        return;
-    }
+    // if we didn't get anything, try to read from an assuo.toml file to print that out
+    let assuo_config = match std::fs::read_to_string("assuo.toml") {
+        Ok(assuo_config) => assuo_config,
+        Err(_) => {
+            // consume from stdin if the file doesn't exist
+            let mut buffer = Vec::new();
+            std::io::stdin().lock().read_to_end(&mut buffer).unwrap();
+            String::from_utf8(buffer).unwrap()
+        }
+    };
 
     // TODO: display help if no "assuo.toml" found (and print that no assuo.toml was found, showing help)
-    let config =
-        toml::from_str::<AssuoFile>(&std::fs::read_to_string("assuo.toml").unwrap()).unwrap();
+    let config = toml::from_str::<AssuoFile>(&assuo_config).unwrap();
     let patch = do_patch(config);
     std::io::stdout()
         .lock()
