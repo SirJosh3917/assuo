@@ -11,3 +11,9 @@ toml = "0.5.7"
 serde = { version = "1.0.117", features = ["derive"] }
 paw = "1.0.0"
 atty = "0.2.14"
+httptest = "0.13.2"
+
+[dev-dependencies]
+assert_cmd = "1.0.1"
+predicates = "1.0.5"
+tempfile = "3.1.0"
