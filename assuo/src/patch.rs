@@ -42,11 +42,40 @@ pub async fn do_patch(file: AssuoFile) -> std::io::Result<Vec<u8>> {
     for patch in patches {
         match patch {
             AssuoPatch::Insert { way, spot, source } => {
-                let insertion_point = get_index(&indexes, spot);
+                // So to visualize this algorithm, let's say we have the following string:
+                //
+                // | H | e | y | o |
+                //
+                // and the instructions are
+                //
+                // [[patch]]
+                // do = "insert"
+                // way = "post"
+                // spot = 2
+                // source = { text = "ll" }
+                //
+                // Visualized, we would be pointing to this area
+                //
+                // | H | e | y | o |
+                //         ^~~~~
+                //
+                // What we really want is to "insert X after the e", in this scenario.
+                // Thus, we should search for the spot minus one in order to find where "e" is,
+                // then we can insert data after that position
+                //
+                // Pre inserts will need to look for the "y" (which it is pointing at already) and
+                // insert before that.
+                let insertion_point = get_index(
+                    &indexes,
+                    match way {
+                        Direction::Post => spot - 1,
+                        Direction::Pre => spot,
+                    },
+                );
 
                 let insertion_point = match way {
-                    Direction::Pre => insertion_point,
                     Direction::Post => insertion_point + 1,
+                    Direction::Pre => insertion_point,
                 };
 
                 indexes.splice(
