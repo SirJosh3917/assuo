@@ -13,3 +13,4 @@ reqwest = "0.10.8"
 [dev-dependencies]
 httptest = "0.13.2"
 tokio = { version = "^0.2", features = ["rt-threaded", "macros"] }
+rand = "0.7.3"
