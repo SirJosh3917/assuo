@@ -1,5 +1,8 @@
 //! This module holds the data structures used when deserializing an Assuo patch file.
 
+use std::io::ErrorKind;
+
+use async_trait::async_trait;
 use serde::de::Error;
 use serde::Deserialize;
 use toml::Value;
@@ -47,16 +50,16 @@ pub enum AssuoSource {
     Bytes(Vec<u8>),
     /// Some text. Plain and simple.
     Text(String),
-    /// Fetches data at a given URL, and will use the payload to inject it.
-    Url(String),
     /// Reads a file on disk at the given path, and will read the file to inject it.
     File(String),
-    /// Reads an Assuo patch file from the URL specified, and after applying that Assuo patch file, uses the resultant
-    /// data as part of the modification.
-    AssuoUrl(String),
+    /// Fetches data at a given URL, and will use the payload to inject it.
+    Url(String),
     /// Reads an Assuo patch file from disk, and after applying that Assuo patch file, uses the resultant data as part
     /// of the modification.
     AssuoFile(String),
+    /// Reads an Assuo patch file from the URL specified, and after applying that Assuo patch file, uses the resultant
+    /// data as part of the modification.
+    AssuoUrl(String),
 }
 
 /// Represents a single action of patching.
@@ -91,37 +94,172 @@ pub enum Direction {
 
 // some mildly ugly stuff
 
-impl AssuoFile {
-    pub fn resolve(self) -> AssuoFile<Vec<u8>> {
-        let source = self.source.resolve();
-        AssuoFile {
-            source,
-            patch: self.patch,
+/// When one trait needs to perform some kind of computation and resolve into another, this trait can be used.
+#[async_trait]
+pub trait Resolvable<R> {
+    async fn resolve(self) -> std::io::Result<R>;
+}
+
+#[async_trait]
+impl Resolvable<Vec<u8>> for AssuoSource {
+    async fn resolve(self) -> std::io::Result<Vec<u8>> {
+        fn err(kind: ErrorKind, reason: &'static str) -> std::io::Error {
+            std::io::Error::new(kind, reason)
+        }
+
+        // TODO: clean this up
+        match self {
+            AssuoSource::Bytes(bytes) => Ok(bytes),
+            AssuoSource::Text(string) => Ok(string.into_bytes()),
+            AssuoSource::File(file_path) => {
+                std::fs::read_to_string(file_path).and_then(|string| Ok(string.into_bytes()))
+            }
+            AssuoSource::Url(url) => {
+                let url = match reqwest::Url::parse(&url) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "the url was invalid",
+                        ))
+                    }
+                };
+
+                let response = match reqwest::get(url).await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotConnected,
+                            "couldn't GET the url",
+                        ))
+                    }
+                };
+
+                let bytes = match response.bytes().await {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotConnected,
+                            "couldn't read bytes from peer",
+                        ))
+                    }
+                };
+
+                Ok(bytes.to_vec())
+            }
+            AssuoSource::AssuoFile(file_path) => {
+                let payload = match std::fs::read_to_string(file_path)
+                    .and_then(|string| Ok(string.into_bytes()))
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "couldnt parse bytes into string",
+                            )
+                        })
+                    })
+                    .and_then(|payload| {
+                        try_parse(&payload).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "couldnt parse asuo config file",
+                            )
+                        })
+                    }) {
+                    Ok(payload) => payload,
+                    Err(error) => return Err(error),
+                };
+
+                crate::patch::do_patch(payload).await
+            }
+            AssuoSource::AssuoUrl(url) => {
+                let url = match reqwest::Url::parse(&url) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "the url was invalid",
+                        ))
+                    }
+                };
+
+                let response = match reqwest::get(url).await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotConnected,
+                            "couldn't GET the url",
+                        ))
+                    }
+                };
+
+                let bytes = match response.bytes().await {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotConnected,
+                            "couldn't read bytes from peer",
+                        ))
+                    }
+                };
+
+                let bytes = bytes.to_vec();
+
+                let payload = match String::from_utf8(bytes)
+                    .map_err(|_| err(ErrorKind::InvalidData, "invalid string"))
+                    .and_then(|string| Ok(string.into_bytes()))
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "couldnt parse bytes into string",
+                            )
+                        })
+                    })
+                    .and_then(|payload| {
+                        try_parse(&payload).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "couldnt parse asuo config file",
+                            )
+                        })
+                    }) {
+                    Ok(payload) => payload,
+                    Err(error) => return Err(error),
+                };
+
+                crate::patch::do_patch(payload).await
+            }
         }
     }
 }
 
-impl AssuoPatch {
-    pub fn resolve(self) -> AssuoPatch<Vec<u8>> {
-        match self {
+#[async_trait]
+impl Resolvable<AssuoFile<Vec<u8>>> for AssuoFile {
+    // impl<S: Send + Resolvable<Vec<u8>>> Resolvable<AssuoFile<Vec<u8>>> for AssuoFile<S> {
+    async fn resolve(self) -> std::io::Result<AssuoFile<Vec<u8>>> {
+        let resolved_source = self.source.resolve().await?;
+
+        Ok(AssuoFile {
+            source: resolved_source,
+            patch: self.patch,
+        })
+    }
+}
+
+#[async_trait]
+impl Resolvable<AssuoPatch<Vec<u8>>> for AssuoPatch {
+    // impl<S: Send + Resolvable<Vec<u8>>> Resolvable<AssuoPatch<Vec<u8>>> for AssuoPatch<S> {
+    async fn resolve(self) -> std::io::Result<AssuoPatch<Vec<u8>>> {
+        Ok(match self {
             AssuoPatch::Insert { way, spot, source } => {
-                let source = source.resolve();
+                let source = source.resolve().await?;
                 AssuoPatch::<Vec<u8>>::Insert { way, spot, source }
             }
             AssuoPatch::Remove { way, spot, count } => {
                 AssuoPatch::<Vec<u8>>::Remove { way, spot, count }
             }
-        }
-    }
-}
-
-impl AssuoSource {
-    pub fn resolve(self) -> Vec<u8> {
-        match self {
-            AssuoSource::Bytes(bytes) => bytes,
-            AssuoSource::Text(text) => text.into_bytes(),
-            _ => panic!("unimplemented route"),
-        }
+        })
     }
 }
 

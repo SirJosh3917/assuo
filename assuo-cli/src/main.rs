@@ -2,7 +2,8 @@ use assuo::patch::do_patch;
 use std::io::prelude::*;
 
 #[paw::main]
-fn main(args: paw::Args) {
+// #[tokio::main(flavor = "current_thread")] 0.3+ only
+fn main(args: paw::Args) -> Result<(), Box<dyn std::error::Error>> {
     for arg in args.skip(1) {
         if arg == "--init" || arg == "-i" {
             init();
@@ -20,8 +21,10 @@ fn main(args: paw::Args) {
     let assuo_config = String::from_utf8(buffer).unwrap();
 
     let config = assuo::models::try_parse(&assuo_config).unwrap();
-    let patch = do_patch(config);
+    let patch = tokio::runtime::Runtime::new()?.block_on(do_patch(config))?;
     std::io::stdout().lock().write_all(&patch).unwrap();
+
+    Ok(())
 }
 
 fn help() {

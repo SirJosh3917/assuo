@@ -1,22 +1,23 @@
 //! This module contains all algorithm related things for applying patches.
 
+use crate::models::Resolvable;
 use crate::models::{AssuoFile, AssuoPatch, Direction};
 
 /// Given an AssuoFile, will perform all patches on the given assuo file and return the patched file.
-pub fn do_patch(file: AssuoFile) -> Vec<u8> {
+pub async fn do_patch(file: AssuoFile) -> std::io::Result<Vec<u8>> {
     // in the future, it would be nice to be able to apply patches as they come along so that everything is
     // non-blocking and fast, but for now, it's much simpler to "resolve everything -> apply patches"
 
     // resolve the base
-    let mut file = file.resolve();
+    let mut file = file.resolve().await?;
 
     // resolve every patch
-    let patches = file
-        .patch
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p.resolve())
-        .collect::<Vec<_>>();
+    let mut patches = Vec::new();
+    if let Some(patch) = file.patch {
+        for patch in patch {
+            patches.push(patch.resolve().await?);
+        }
+    }
 
     // so right now i'm just going for simplicity rather than speed, so i just need a method that works for these patches
     // one ideal thing to do is to maintain another Vec with a Vec of indexes that is in the original file
@@ -82,5 +83,5 @@ pub fn do_patch(file: AssuoFile) -> Vec<u8> {
         }
     }
 
-    file.source
+    Ok(file.source)
 }
